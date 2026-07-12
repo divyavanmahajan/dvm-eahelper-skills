@@ -25,6 +25,8 @@ before relying on any parameter not shown elsewhere in this file with a working 
 | `response_format` | Structured output schema for the main agent |
 | `permissions` | List of `FilesystemPermission` rules (allow/deny over read/write + glob paths) |
 | `store` | A LangGraph `BaseStore` instance — required when using `StoreBackend` (passed separately from `backend=`) |
+| `checkpointer` | LangGraph checkpointer (e.g. `langgraph.checkpoint.memory.InMemorySaver()`). Verified in working code: required by the AG-UI (`ag-ui-langgraph`) and Azure Foundry (`azure-ai-agentserver-langgraph`) serving adapters, and makes `thread_id`-keyed invokes resume conversation state within a process. Pass `None` for `langgraph dev`/LangGraph-platform deployments — they inject their own persistence. See [serving.md](serving.md) |
+| `name` | Agent name string (verified in working code, e.g. `name="eaagent"`); also shown in the docs' streaming example (`name="main-agent"`) |
 
 ### Default middleware stack (main agent), in order
 
@@ -407,10 +409,30 @@ async def main():
 asyncio.run(main())
 ```
 
-`langchain-mcp-adapters` also supports stdio servers, OAuth, and tool filtering per the tools doc
-summary — the fetched content didn't include verbatim code for those variants, so verify against
+Stdio transport (verified against the `langchain-mcp-adapters` package docs, v0.3.x) — one client
+can mix stdio and HTTP servers:
+
+```python
+client = MultiServerMCPClient(
+    {
+        "math": {
+            "command": "python",
+            "args": ["/path/to/math_server.py"],
+            "transport": "stdio",
+        },
+        "weather": {
+            "url": "http://localhost:8000/mcp",
+            "transport": "http",
+        },
+    }
+)
+tools = await client.get_tools()
+```
+
+`langchain-mcp-adapters` also supports OAuth authentication and MCP tool filtering per the tools
+doc summary — the fetched content didn't include verbatim code for those two, so verify against
 `https://docs.langchain.com/oss/python/deepagents/tools` and the `langchain-mcp-adapters` package
-docs before relying on exact parameter names for stdio/OAuth configs.
+docs before relying on exact parameter names for OAuth/filtering configs.
 
 ## PyPI package facts (verified via PyPI JSON API)
 

@@ -14,7 +14,8 @@ standard: a folder with a `SKILL.md` (YAML frontmatter + markdown instructions),
    (PyPI package [`deepagents`](https://pypi.org/project/deepagents/)): `create_deep_agent`,
    filesystem backends and sandboxes, tool/MCP registration, agentskills.io-format skill
    directories, `AGENTS.md` memory, subagents, model provider strings (incl. Azure OpenAI and
-   LiteLLM-style gateways), and running locally with `langgraph dev`.
+   LiteLLM-style gateways), running locally with `langgraph dev`, and serving over HTTP (AG-UI
+   protocol, Azure AI Foundry hosted agents, OpenTelemetry).
 
 ```
 skills/
@@ -32,7 +33,8 @@ skills/
     ├── SKILL.md
     └── references/
         ├── api-reference.md
-        └── patterns.md
+        ├── patterns.md
+        └── serving.md
 ```
 
 ## Installing the skills
@@ -170,6 +172,12 @@ skills with everyone working in that repository via Copilot in VS Code.
    (LiteLLM proxy via `init_chat_model(..., base_url=...)`).
 6. Subagents (`SubAgent` dicts, `CompiledSubAgent`, the default `general-purpose` subagent) and
    running locally with `langgraph.json` + `langgraph dev`, or a FastAPI wrapper / CLI REPL.
+7. Serving the agent over HTTP: an AG-UI protocol endpoint (`ag-ui-langgraph`, with a
+   RUN_ERROR-guarding wrapper and `@ag-ui/client` testing), Azure AI Foundry hosted agents
+   (`azure-ai-agentserver-langgraph`, matching-prerelease version pins, the
+   `/runs`/`/responses`/probe contract), a hand-rolled OpenAI-Responses-shape endpoint for local
+   testing, and env-var-driven OpenTelemetry tracing — all verified against a working
+   implementation.
 
 ## License
 

@@ -241,6 +241,32 @@ pip install -U "langgraph-cli[inmem]"
 langgraph dev
 ```
 
+**Checkpointer + factory pattern (verified in working code):** graphs served by `langgraph dev` /
+the LangGraph platform must be built **without** an explicit checkpointer — the platform injects
+its own persistence layer. If the same agent is also self-hosted (FastAPI/AG-UI/Foundry, where a
+checkpointer *is* required — see [serving.md](serving.md)), use a factory with a flag and point
+`langgraph.json` at a no-argument factory that passes `checkpointer=False`:
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+def build_agent(*, checkpointer: bool = True):
+    return create_deep_agent(..., checkpointer=InMemorySaver() if checkpointer else None)
+
+_graph = None
+
+def get_graph():
+    """No-argument factory for langgraph.json — cache so hot-reload doesn't rebuild."""
+    global _graph
+    if _graph is None:
+        _graph = build_agent(checkpointer=False)
+    return _graph
+```
+
+```json
+{ "graphs": { "agent": "./src/myagent/agent.py:get_graph" } }
+```
+
 The fetched "Going to production" doc mentions `langgraph dev` for local testing but does not show
 its CLI flags — use `langgraph dev --help` for authoritative flag documentation. Production
 deployment paths mentioned in the docs: **Managed Deep Agents** (a CLI-first hosted runtime for
