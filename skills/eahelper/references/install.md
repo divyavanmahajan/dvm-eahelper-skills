@@ -4,7 +4,7 @@
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Python | 3.11+ | [python.org/downloads](https://www.python.org/downloads/) |
+| Python | 3.11–3.13 (**not 3.14**) | KuzuDB has no Windows wheels for 3.14 yet — pin 3.13. [python.org/downloads](https://www.python.org/downloads/) |
 | `uv` | any recent | Package/tool manager used to install and run `dvm-eahelper` |
 | Google Chrome or Microsoft Edge | any recent | Needed for browser-based token extraction (skip if using a Technical User API key) |
 | Neo4j Desktop | 5.x | Only needed if using `--db neo4j` |
@@ -37,8 +37,11 @@ Two supported ways to run it:
 ### Option A — install as a uv tool (recommended for repeated use)
 
 ```bash
-uv tool install dvm-eahelper
+uv tool install --python 3.13 dvm-eahelper
 ```
+
+Always pass `--python 3.13`: on Python 3.14 the install fails on Windows because KuzuDB
+doesn't publish 3.14 Windows wheels yet.
 
 This puts `eahelper` on your `PATH`. Upgrade later with:
 
@@ -49,8 +52,8 @@ uv tool upgrade dvm-eahelper
 ### Option B — run without installing, via `uvx`
 
 ```bash
-uvx dvm-eahelper -- proxy
-uvx dvm-eahelper -- download --list-types
+uvx --python 3.13 dvm-eahelper -- proxy
+uvx --python 3.13 dvm-eahelper -- download --list-types
 ```
 
 Everything after `--` is passed straight to `eahelper`.

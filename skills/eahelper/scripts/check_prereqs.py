@@ -36,6 +36,7 @@ import urllib.request
 from pathlib import Path
 
 MIN_PYTHON = (3, 11)
+MAX_PYTHON = (3, 13)  # KuzuDB has no Windows wheels for 3.14 yet
 CDP_PORT = 19222
 LEGACY_CDP_PORT = 9222
 PROXY_PORT = 8765
@@ -57,6 +58,15 @@ def _print_result(status: str, label: str, detail: str = "") -> None:
 def check_python_version() -> bool:
     version = sys.version_info
     version_str = f"{version.major}.{version.minor}.{version.micro}"
+    if (version.major, version.minor) > MAX_PYTHON:
+        _print_result(
+            WARN,
+            "Python version",
+            f"{version_str} found — KuzuDB has no Windows wheels for Python > "
+            f"{MAX_PYTHON[0]}.{MAX_PYTHON[1]} yet; install may fail on Windows. "
+            f"Use Python {MAX_PYTHON[0]}.{MAX_PYTHON[1]} (e.g. uv tool install --python 3.13 dvm-eahelper).",
+        )
+        return True
     if (version.major, version.minor) >= MIN_PYTHON:
         _print_result(CHECK, "Python version", f"{version_str} (>= {MIN_PYTHON[0]}.{MIN_PYTHON[1]} required)")
         return True

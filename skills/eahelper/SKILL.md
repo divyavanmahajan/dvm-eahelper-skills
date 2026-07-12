@@ -26,21 +26,23 @@ those files in when you need more than the summary here.
 
 ## 0. Prerequisite check & install
 
-Confirm Python 3.11+ and `uv` are available, then install the tool:
+Confirm Python 3.11–3.13 and `uv` are available, then install the tool.
+**Use Python 3.13, not 3.14**: KuzuDB does not yet publish Windows wheels for 3.14, so
+installation fails on Windows with 3.14 — always pin `--python 3.13`.
 
 ```bash
 # macOS / Linux
-python3 --version                       # must be 3.11+
+python3 --version                       # must be 3.11–3.13 (NOT 3.14)
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if uv is missing
-uv tool install dvm-eahelper
+uv tool install --python 3.13 dvm-eahelper
 uv tool run --from dvm-eahelper playwright install chromium   # one-time browser binaries
 ```
 
 ```powershell
 # Windows (PowerShell)
-python --version                         # must be 3.11+
+python --version                         # must be 3.11–3.13 (NOT 3.14)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # if uv is missing
-uv tool install dvm-eahelper
+uv tool install --python 3.13 dvm-eahelper
 uv tool run --from dvm-eahelper playwright install chromium
 ```
 
