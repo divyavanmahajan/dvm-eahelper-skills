@@ -1,39 +1,56 @@
 # dvm-eahelper-skills
 
-An [Agent Skill](https://agentskills.io) that teaches AI coding agents (Claude Code, GitHub
-Copilot) how to work with the [`dvm-eahelper`](https://pypi.org/project/dvm-eahelper/) Python
-package for SAP LeanIX — installing it, running its integrated server (GraphQL proxy + embedded
-MCP endpoint + managed debug browser), downloading factsheets, loading them into a graph database
-(KuzuDB by default, or Neo4j), and querying the result over MCP.
+[Agent Skills](https://agentskills.io) that teach AI coding agents (Claude Code, GitHub Copilot)
+specialized workflows. This repo contains **two skills**, each following the open Agent Skills
+standard: a folder with a `SKILL.md` (YAML frontmatter + markdown instructions), plus
+`references/` for detail the agent pulls in on demand.
 
-This repo contains a single skill, `eahelper`, following the open Agent Skills standard: a folder
-with a `SKILL.md` (YAML frontmatter + markdown instructions), plus `references/` for detail the
-agent pulls in on demand and `scripts/` for a cross-platform prerequisite checker.
+1. **`eahelper`** — work with the [`dvm-eahelper`](https://pypi.org/project/dvm-eahelper/) Python
+   package for SAP LeanIX: installing it, running its integrated server (GraphQL proxy + embedded
+   MCP endpoint + managed debug browser), downloading factsheets, loading them into a graph
+   database (KuzuDB by default, or Neo4j), and querying the result over MCP.
+2. **`deepagents`** — implement agents with the LangChain
+   [DeepAgents](https://docs.langchain.com/oss/python/deepagents/overview) Python framework
+   (PyPI package [`deepagents`](https://pypi.org/project/deepagents/)): `create_deep_agent`,
+   filesystem backends and sandboxes, tool/MCP registration, agentskills.io-format skill
+   directories, `AGENTS.md` memory, subagents, model provider strings (incl. Azure OpenAI and
+   LiteLLM-style gateways), and running locally with `langgraph dev`.
 
 ```
-skills/eahelper/
-├── SKILL.md
-├── references/
-│   ├── install.md
-│   ├── browser-setup.md
-│   ├── cli-reference.md
-│   ├── database-backends.md
-│   └── troubleshooting.md
-└── scripts/
-    └── check_prereqs.py
+skills/
+├── eahelper/
+│   ├── SKILL.md
+│   ├── references/
+│   │   ├── install.md
+│   │   ├── browser-setup.md
+│   │   ├── cli-reference.md
+│   │   ├── database-backends.md
+│   │   └── troubleshooting.md
+│   └── scripts/
+│       └── check_prereqs.py
+└── deepagents/
+    ├── SKILL.md
+    └── references/
+        ├── api-reference.md
+        └── patterns.md
 ```
 
-## Installing this skill
+## Installing the skills
+
+The commands below show the `eahelper` skill; to install the `deepagents` skill (or both), repeat
+the same copy command with `skills/deepagents` as the source and `deepagents` as the target folder
+name — e.g. `cp -R skills/deepagents ~/.claude/skills/deepagents`.
 
 ### Claude Code
 
-Copy or clone the `skills/eahelper` folder into your Claude Code skills directory.
+Copy or clone the skill folder(s) into your Claude Code skills directory.
 
 **Personal (all projects), macOS/Linux:**
 
 ```bash
 mkdir -p ~/.claude/skills
 cp -R skills/eahelper ~/.claude/skills/eahelper
+cp -R skills/deepagents ~/.claude/skills/deepagents
 ```
 
 **Personal (all projects), Windows (PowerShell):**
@@ -41,6 +58,7 @@ cp -R skills/eahelper ~/.claude/skills/eahelper
 ```powershell
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.claude\skills" | Out-Null
 Copy-Item -Recurse -Force "skills\eahelper" "$env:USERPROFILE\.claude\skills\eahelper"
+Copy-Item -Recurse -Force "skills\deepagents" "$env:USERPROFILE\.claude\skills\deepagents"
 ```
 
 **Project-scoped (this repo only), any OS:**
@@ -48,6 +66,7 @@ Copy-Item -Recurse -Force "skills\eahelper" "$env:USERPROFILE\.claude\skills\eah
 ```bash
 mkdir -p .claude/skills
 cp -R /path/to/dvm-eahelper-skills/skills/eahelper .claude/skills/eahelper
+cp -R /path/to/dvm-eahelper-skills/skills/deepagents .claude/skills/deepagents
 ```
 
 Or clone this whole repo directly into place instead of copying:
@@ -74,6 +93,7 @@ Copilot follows the same open Agent Skills standard and looks for skills in:
 ```bash
 mkdir -p .github/skills
 cp -R skills/eahelper .github/skills/eahelper
+cp -R skills/deepagents .github/skills/deepagents
 ```
 
 **Repository-level, Windows (PowerShell):**
@@ -81,6 +101,7 @@ cp -R skills/eahelper .github/skills/eahelper
 ```powershell
 New-Item -ItemType Directory -Force -Path ".github\skills" | Out-Null
 Copy-Item -Recurse -Force "skills\eahelper" ".github\skills\eahelper"
+Copy-Item -Recurse -Force "skills\deepagents" ".github\skills\deepagents"
 ```
 
 **Personal/global, macOS/Linux:**
@@ -88,6 +109,7 @@ Copy-Item -Recurse -Force "skills\eahelper" ".github\skills\eahelper"
 ```bash
 mkdir -p ~/.copilot/skills
 cp -R skills/eahelper ~/.copilot/skills/eahelper
+cp -R skills/deepagents ~/.copilot/skills/deepagents
 ```
 
 **Personal/global, Windows (PowerShell):**
@@ -95,16 +117,17 @@ cp -R skills/eahelper ~/.copilot/skills/eahelper
 ```powershell
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.copilot\skills" | Out-Null
 Copy-Item -Recurse -Force "skills\eahelper" "$env:USERPROFILE\.copilot\skills\eahelper"
+Copy-Item -Recurse -Force "skills\deepagents" "$env:USERPROFILE\.copilot\skills\deepagents"
 ```
 
-Commit the `.github/skills/eahelper` folder to share the skill with everyone working in that
-repository via Copilot in VS Code.
+Commit the `.github/skills/eahelper` and/or `.github/skills/deepagents` folders to share the
+skills with everyone working in that repository via Copilot in VS Code.
 
 > Verify against the current docs before relying on this: GitHub's Agent Skills feature is
 > evolving, and the exact supported paths/behavior may change. See
 > <https://docs.github.com/en/copilot/concepts/agents/about-agent-skills>.
 
-## What the skill covers
+## What the `eahelper` skill covers
 
 1. Installing `dvm-eahelper` with `uv` (`uv tool install dvm-eahelper` or `uvx dvm-eahelper`) and
    the one-time Playwright Chromium setup.
@@ -129,6 +152,24 @@ repository via Copilot in VS Code.
    all windows closed first, KuzuDB's single-writer lock conflicting between the server's MCP
    endpoint and a concurrent `load`, stale pidfiles, token extraction timeouts, corporate
    SSL-inspection proxies, and Neo4j connection/auth issues.
+
+## What the `deepagents` skill covers
+
+1. Installing the [`deepagents`](https://pypi.org/project/deepagents/) package (Python >=3.11) and
+   creating a minimal agent with `create_deep_agent`.
+2. Choosing a virtual filesystem backend — `StateBackend` (default), `FilesystemBackend`,
+   `StoreBackend`, `ContextHubBackend`, `CompositeBackend` routing (e.g. persistent `/memories/`),
+   `LocalShellBackend` (dev-only, with explicit warnings), and sandbox backends (Daytona, E2B,
+   Modal, Runloop, Vercel, AgentCore, NVIDIA OpenShell, LangSmith-managed).
+3. Registering tools: plain Python functions, LangChain tools, and MCP servers via
+   `langchain-mcp-adapters`.
+4. Skills directories (agentskills.io spec, same standard as this repo) and `AGENTS.md` memory,
+   including scoping and prompt-injection considerations.
+5. Model provider strings — Anthropic, OpenAI, Google, OpenRouter, Fireworks, Baseten, Ollama —
+   plus Azure OpenAI (`azure_openai:` with `azure_deployment`) and OpenAI-compatible gateways
+   (LiteLLM proxy via `init_chat_model(..., base_url=...)`).
+6. Subagents (`SubAgent` dicts, `CompiledSubAgent`, the default `general-purpose` subagent) and
+   running locally with `langgraph.json` + `langgraph dev`, or a FastAPI wrapper / CLI REPL.
 
 ## License
 
