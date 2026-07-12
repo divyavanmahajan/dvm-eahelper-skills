@@ -57,8 +57,9 @@ Everything after `--` is passed straight to `eahelper`.
 
 ## Install Playwright's Chromium binary (one-time)
 
-The proxy uses Playwright to attach to your browser over CDP. Playwright needs its own bundled
-Chromium **runtime files** even though it attaches to your regular Chrome/Edge — install once:
+`eahelper server` uses Playwright to launch and attach to the managed debug browser over CDP.
+Playwright needs its own bundled Chromium **runtime files** for this even when the managed browser
+itself is Chrome or Edge — install once:
 
 ```bash
 # If eahelper is installed as a uv tool:
@@ -68,14 +69,26 @@ uv tool run --from dvm-eahelper playwright install chromium
 uvx --from dvm-eahelper playwright install chromium
 ```
 
-If this step is skipped, `eahelper proxy` may fail with a Playwright "executable doesn't exist"
-error the first time it tries to connect over CDP.
+If this step is skipped, `eahelper server` may fail with a Playwright "executable doesn't exist"
+error the first time it tries to launch the managed browser.
+
+## Configuration file: `~/.eahelper/config.toml`
+
+`eahelper` persists resolved settings (workspace URL, preferred browser/CDP port, default graph
+backend, Neo4j URI, etc.) to `~/.eahelper/config.toml` the first time they're supplied — either via
+a CLI flag or an interactive prompt. On every later run, the stored value is reused automatically,
+so setup questions (workspace URL, kuzu vs. neo4j) are normally asked at most once per machine.
+Passwords are never written here (`NEO4J_PASSWORD` always comes from an environment variable or
+`.env`). See [cli-reference.md](cli-reference.md#eahelper-config) for the `eahelper config`
+subcommand and the full list of recognized keys, and
+[browser-setup.md](browser-setup.md) for the managed-browser profile directory
+(`~/.eahelper/browser-profile`) that lives alongside it.
 
 ## Verifying the install
 
 ```bash
 eahelper --help
-eahelper proxy --help
+eahelper server --help
 python3 --version   # or `python --version` on Windows
 uv --version
 ```
@@ -87,5 +100,7 @@ python scripts/check_prereqs.py
 ```
 
 It reports, in order: Python version, `uv` presence, `dvm-eahelper` installation, Playwright
-Chromium install status, and whether port 9222 is currently reachable (informational only — it's
-expected to be closed until you launch the debug browser in step 1 of the main workflow).
+Chromium install status, whether `~/.eahelper/config.toml` exists yet, whether the managed-browser
+CDP port (`19222`) is currently reachable (informational only — it's expected to be closed unless
+`eahelper server` is mid-login), and whether the `eahelper server` health endpoint
+(`http://localhost:8765/healthz`) is currently responding.

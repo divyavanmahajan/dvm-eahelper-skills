@@ -2,9 +2,9 @@
 
 An [Agent Skill](https://agentskills.io) that teaches AI coding agents (Claude Code, GitHub
 Copilot) how to work with the [`dvm-eahelper`](https://pypi.org/project/dvm-eahelper/) Python
-package for SAP LeanIX — installing it, running its local GraphQL proxy against an
-already-logged-in browser, downloading factsheets, loading them into a graph database (KuzuDB by
-default, or Neo4j), and querying the result.
+package for SAP LeanIX — installing it, running its integrated server (GraphQL proxy + embedded
+MCP endpoint + managed debug browser), downloading factsheets, loading them into a graph database
+(KuzuDB by default, or Neo4j), and querying the result over MCP.
 
 This repo contains a single skill, `eahelper`, following the open Agent Skills standard: a folder
 with a `SKILL.md` (YAML frontmatter + markdown instructions), plus `references/` for detail the
@@ -108,16 +108,27 @@ repository via Copilot in VS Code.
 
 1. Installing `dvm-eahelper` with `uv` (`uv tool install dvm-eahelper` or `uvx dvm-eahelper`) and
    the one-time Playwright Chromium setup.
-2. Launching an isolated, CDP-debuggable Chrome/Edge instance on port 9222 (Windows and macOS
-   commands) and logging in to LeanIX in it.
-3. Starting the local GraphQL proxy (`eahelper proxy`), downloading factsheets
-   (`eahelper download`), and loading them into KuzuDB or Neo4j (`eahelper load --db kuzu|neo4j`),
-   or loading a demo graph (`eahelper seed`).
-4. Querying the graph — directly via the `kuzu` Python API or a Kuzu MCP server, or via the
-   `mcp-neo4j-cypher` MCP server for Neo4j.
-5. Troubleshooting the common failure points: the debug port not opening, token extraction
-   timeouts, running `download`/`load` before the proxy is up, corporate SSL-inspection proxies,
-   and Neo4j connection/auth issues.
+2. Starting the integrated supervisor, `eahelper server` — GraphQL proxy (port 8765) + embedded
+   MCP endpoint (`/mcp`) + a managed debug browser (CDP port 19222, persistent profile). First run
+   prompts for the LeanIX workspace URL and database choice and saves them to
+   `~/.eahelper/config.toml`; the managed browser opens for login and **closes itself
+   automatically** once a token is captured. `server start|stop|status` run it as a background
+   daemon (pidfile + `server.log` under `~/.eahelper/`).
+3. Downloading factsheets (`eahelper download`) and loading them into KuzuDB or Neo4j
+   (`eahelper load --db kuzu|neo4j`), or loading a demo graph (`eahelper seed`) — both `download`
+   and `load` auto-start the server in the background if it isn't already running, so a second
+   terminal is no longer required.
+4. Querying the graph over the embedded MCP endpoint — the same `get_schema`/`query` tools work
+   for both KuzuDB and Neo4j. Run `eahelper mcp-config --install` to wire up Claude Code
+   (`.mcp.json`) and/or VS Code/Copilot (`.vscode/mcp.json`), offering both the HTTP endpoint and a
+   stdio variant (`eahelper mcp`). External Kuzu/Neo4j MCP servers remain documented as fallbacks.
+5. Managing persisted settings via `eahelper config` (`~/.eahelper/config.toml`) — CLI flag > env
+   var > config.toml > interactive prompt, with prompts saved back so the user is asked once ever.
+   Passwords (e.g. `NEO4J_PASSWORD`) are never stored in the config file.
+6. Troubleshooting the common failure points: CDP port 19222 conflicts, Edge on Windows requiring
+   all windows closed first, KuzuDB's single-writer lock conflicting between the server's MCP
+   endpoint and a concurrent `load`, stale pidfiles, token extraction timeouts, corporate
+   SSL-inspection proxies, and Neo4j connection/auth issues.
 
 ## License
 

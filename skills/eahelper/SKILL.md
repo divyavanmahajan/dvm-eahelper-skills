@@ -1,23 +1,28 @@
 ---
 name: eahelper
-description: Work with SAP LeanIX using the dvm-eahelper CLI - install it, run the GraphQL proxy against an already-logged-in browser, download factsheets, load them into KuzuDB (default) or Neo4j, and query the resulting graph.
+description: Work with SAP LeanIX using the dvm-eahelper CLI - install it, run the integrated server (GraphQL proxy + embedded MCP endpoint + managed debug browser), download factsheets, load them into KuzuDB (default) or Neo4j, and query the resulting graph over MCP.
 ---
 
 # eahelper — SAP LeanIX Graph Workflow
 
-`eahelper` is a unified CLI (PyPI package `dvm-eahelper`) with five subcommands:
+`eahelper` is a unified CLI (PyPI package `dvm-eahelper`). As of v0.2.0 it centers on one
+supervisor process, `eahelper server`, that bundles the GraphQL proxy, an embedded MCP endpoint,
+and a managed debug browser — no more juggling a manually-launched browser and a separate proxy
+terminal.
 
 | Subcommand | Purpose |
 |---|---|
-| `proxy`    | Start a local GraphQL proxy that forwards to LeanIX, authenticated via an already-logged-in browser (or a Technical User API key) |
-| `diagnose` | Test SSL/TLS connectivity and recommend a fix for corporate proxy issues |
-| `download` | Fetch factsheets and relationships from LeanIX via the proxy, save as JSON |
-| `load`     | Load downloaded JSON into a graph database — KuzuDB (default, embedded) or Neo4j (`--db kuzu\|neo4j`) |
-| `seed`     | Load a small self-contained demo graph, no LeanIX access needed |
+| `server`      | Run the supervisor: GraphQL proxy (port 8765) + embedded MCP endpoint (`/mcp`) + managed debug browser. Foreground by default; `start\|stop\|status` manage it as a background daemon. |
+| `diagnose`    | Test SSL/TLS connectivity and recommend a fix for corporate proxy issues |
+| `download`    | Fetch factsheets and relationships from LeanIX via the proxy, save as JSON |
+| `load`        | Load downloaded JSON into a graph database — KuzuDB (default, embedded) or Neo4j (`--db kuzu\|neo4j`) |
+| `seed`        | Load a small self-contained demo graph, no LeanIX access needed |
+| `config`      | Show/set/unset persisted settings in `~/.eahelper/config.toml` |
+| `mcp`         | Run the MCP server over stdio (for agents that only support stdio transport) |
+| `mcp-config`  | Print or install MCP client config for Claude Code / VS Code (Copilot) |
 
-Follow the workflow below in order. Do not skip the browser-launch step — it is the most common
-source of failures. Full detail for each step lives in `references/`; only pull those files in
-when you need more than the summary here.
+Follow the workflow below in order. Full detail for each step lives in `references/`; only pull
+those files in when you need more than the summary here.
 
 ## 0. Prerequisite check & install
 
@@ -49,62 +54,41 @@ the script checks.
 python scripts/check_prereqs.py
 ```
 
-## 1. Launch a debug browser and log in to LeanIX
-
-The proxy authenticates by attaching to an **already-running, already-logged-in** browser over
-Chrome DevTools Protocol (CDP) on port 9222. A normal browser window will NOT work — you must
-launch a separate, isolated instance with its own profile directory, because an already-running
-Chrome/Edge silently ignores `--remote-debugging-port` on a new window.
-
-```powershell
-# Windows — Edge (recommended, preinstalled)
-Start-Process "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" `
-  "--remote-debugging-port=9222 --user-data-dir=C:\Temp\edge-debug --no-first-run --no-default-browser-check"
-
-# Verify the debug port is open
-Invoke-RestMethod http://localhost:9222/json/version
-```
+## 1. Start the server
 
 ```bash
-# macOS — Chrome
-open -na "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir="$HOME/chrome-debug"
-
-# Verify the debug port is open
-curl -s http://localhost:9222/json/version
+eahelper server
 ```
 
-Both commands must return JSON containing the browser version. If they don't, see
-[references/troubleshooting.md](references/troubleshooting.md).
+On first run, if `~/.eahelper/config.toml` doesn't have a workspace URL or database choice yet,
+`eahelper server` prompts for them interactively and saves the answers back to that file — you
+are asked at most once. It then opens a managed, isolated debug browser window automatically (CDP
+port 19222, persistent profile at `~/.eahelper/browser-profile`) so you can log in to LeanIX. Once
+a token is captured, the browser **closes itself automatically** — you don't need to manage or
+leave a browser window open.
 
-In the window that opens, **log in to your LeanIX workspace** before continuing. Leave it open.
+Log in to your LeanIX workspace in the window that opens, then wait for it to close on its own and
+for the server to report it's ready. Because the browser profile is persistent, SSO cookies
+usually survive between runs — after the first login you typically won't be prompted again.
 
-Full platform detail, alternate browsers, and profile-path notes:
-[references/browser-setup.md](references/browser-setup.md).
-
-## 2. Start the proxy
-
-In a separate terminal, with the debug browser still open and logged in:
+`eahelper server` runs in the **foreground** by default and blocks the terminal. To run it as a
+background daemon instead (recommended once you're past first-time setup):
 
 ```bash
-eahelper proxy
-# or, explicitly:
-eahelper proxy --url https://eu-10.leanix.net/YourWorkspace
+eahelper server start     # launches in the background, writes a pidfile + logs under ~/.eahelper/
+eahelper server status    # check whether it's up and healthy
+eahelper server stop      # stop the background daemon
 ```
 
-You'll be prompted for the workspace URL if not supplied. The proxy extracts a Bearer token from
-the browser via CDP and serves:
-- GraphiQL UI at `http://localhost:8765/graphql`
-- Health check at `http://localhost:8765/health`
-
-Leave this terminal running — `download` and `load` need the proxy alive.
+Full platform detail (managed vs. manual browser, Windows Edge-vs-Chrome guidance, persistent
+profile) and the daemon file locations: [references/browser-setup.md](references/browser-setup.md)
+and [references/cli-reference.md](references/cli-reference.md).
 
 If you hit SSL errors (common on corporate networks), run `eahelper diagnose` first and apply its
 recommended fix (usually a `--legacy-ssl` or `--ca-bundle` flag). See
 [references/troubleshooting.md](references/troubleshooting.md).
 
-## 3. Download factsheets
-
-In a new terminal (proxy still running in the other one):
+## 2. Download factsheets
 
 ```bash
 # See what's available first
@@ -115,30 +99,30 @@ eahelper download
 eahelper download --type Application --output data/leanix/Application.json
 ```
 
+`download` auto-starts the server in the background if the proxy isn't already reachable, so a
+second terminal is no longer required — but starting `server` yourself first is still the
+recommended path for first-time LeanIX login.
+
 Full flag reference: [references/cli-reference.md](references/cli-reference.md).
 
-## 4. Load into a graph database
+## 3. Load into a graph database
 
 ```bash
 eahelper load --db kuzu     # default, embedded, zero-install — recommended to start
-eahelper load --db neo4j    # requires a running Neo4j server + .env credentials
+eahelper load --db neo4j    # requires a running Neo4j server + credentials
 ```
 
-If `--db` is omitted, `eahelper` prompts interactively; **default to `kuzu`** unless the user has
-an existing Neo4j deployment or explicitly asks for Neo4j.
+Like `download`, `load` auto-starts the server in the background if needed. If `--db` is omitted
+and no default is set in `~/.eahelper/config.toml`, `eahelper` prompts interactively; **default to
+`kuzu`** unless the user has an existing Neo4j deployment or explicitly asks for Neo4j.
 
-For Neo4j, a `.env` file must exist with:
-
-```env
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=your_password_here
-```
+For Neo4j, the connection URI/username can live in `~/.eahelper/config.toml`, but the password is
+never stored there — set `NEO4J_PASSWORD` via environment variable or a `.env` file.
 
 See [references/database-backends.md](references/database-backends.md) for the KuzuDB vs Neo4j
 tradeoffs, storage locations, and idempotency notes.
 
-## 5. (Optional) Seed a demo graph instead
+## 4. (Optional) Seed a demo graph instead
 
 No LeanIX access needed — useful for trying queries or verifying the DB setup:
 
@@ -146,20 +130,38 @@ No LeanIX access needed — useful for trying queries or verifying the DB setup:
 eahelper seed --db kuzu
 ```
 
-## 6. Query the graph
+## 5. Query the graph over MCP
 
-- **KuzuDB** (default): query directly with the `kuzu` Python API, or connect an MCP server (e.g.
-  `mcp-server-kuzu`) so Claude Code / Copilot can query in natural language.
-- **Neo4j**: use the `mcp-neo4j-cypher` MCP server (stdio, launched via `uvx`) for natural-language
-  Cypher queries in Claude Code or GitHub Copilot Chat.
+The server exposes an embedded MCP endpoint (streamable HTTP at `http://localhost:8765/mcp`) that
+works identically for both KuzuDB and Neo4j — no separate third-party MCP server process needed
+for the primary workflow. Wire it up, then query:
 
-Full MCP server configs (JSON for both `.mcp.json` / Claude Code and VS Code `settings.json` /
-Copilot) and example Cypher/Kuzu queries: [references/database-backends.md](references/database-backends.md).
+```bash
+eahelper mcp-config --install
+```
+
+This installs the MCP client config for whichever agent you're running in (Claude Code's
+`.mcp.json`, and/or VS Code/Copilot's `.vscode/mcp.json`), offering both the HTTP endpoint and a
+stdio variant (`eahelper mcp`). Run it once per project, then reload/restart your agent so it picks
+up the new MCP server.
+
+Once connected, use the MCP tools directly instead of writing Cypher by hand outside the agent:
+- `get_schema` — discover node labels, relationship types, and properties in the loaded graph.
+- `query` — run a Cypher query against the graph. Read-write by default; pass `--mcp-read-only` at
+  server-start time to restrict the server to read-only queries.
+
+Example flow: call `get_schema` first, then `query` with `MATCH (a:Application) RETURN a.name
+LIMIT 10` (adjust labels/properties to what `get_schema` reports).
+
+If you need external/legacy MCP servers instead (e.g. an already-configured `kuzu-mcp-server` or
+`mcp-neo4j-cypher`), see [references/database-backends.md](references/database-backends.md) for
+those as documented fallbacks.
 
 ## Troubleshooting
 
-Common failure points — port 9222 not open, "timed out waiting for a Bearer token", running
-`load`/`download` before `proxy` is up, SSL/corporate-proxy certificate errors, Neo4j auth
-failures, stale/expired tokens — are all covered with exact fixes in
+Common failure points — port 19222 conflicts, Edge-on-Windows requiring all windows closed first,
+KuzuDB's single-writer lock conflicting between the server's MCP endpoint and a concurrent `load`,
+stale pidfiles, "timed out waiting for a Bearer token", SSL/corporate-proxy certificate errors, and
+Neo4j auth failures — are all covered with exact fixes in
 [references/troubleshooting.md](references/troubleshooting.md). Check there before improvising a
 fix.

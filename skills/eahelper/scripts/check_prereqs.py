@@ -6,7 +6,11 @@ Checks (in order):
   2. `uv` on PATH
   3. `dvm-eahelper` installed (via `uv tool list` or `eahelper` on PATH)
   4. Playwright Chromium browser installed
-  5. Port 9222 (Chrome/Edge debug port) reachability - informational only
+  5. ~/.eahelper/config.toml presence - informational only
+  6. eahelper server health (GET http://localhost:8765/healthz) - informational only
+  7. Managed-browser CDP port 19222 reachability - informational only
+     (legacy port 9222 is also checked and labeled, for users migrating from
+     older manual-browser-launch workflows)
 
 Works identically on Windows and macOS/Linux. Uses only the standard library
 so it runs with plain `python check_prereqs.py` before any project
@@ -32,8 +36,10 @@ import urllib.request
 from pathlib import Path
 
 MIN_PYTHON = (3, 11)
-DEBUG_PORT = 9222
+CDP_PORT = 19222
+LEGACY_CDP_PORT = 9222
 PROXY_PORT = 8765
+CONFIG_PATH = Path.home() / ".eahelper" / "config.toml"
 
 CHECK = "[OK]  "
 WARN = "[WARN]"
@@ -160,20 +166,20 @@ def check_playwright_chromium() -> bool:
     _print_result(
         WARN,
         "Playwright Chromium",
-        "could not confirm install. If `eahelper proxy` fails with a Playwright "
+        "could not confirm install. If `eahelper server` fails with a Playwright "
         "'executable doesn't exist' error, run:\n"
         "       uv tool run --from dvm-eahelper playwright install chromium",
     )
     return False
 
 
-def check_port(port: int, label: str) -> bool:
+def check_port(port: int, label: str, is_cdp: bool = False) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(1.5)
         result = sock.connect_ex(("127.0.0.1", port))
     if result == 0:
-        # Port is open - try to confirm it's actually a CDP endpoint (for 9222).
-        if port == DEBUG_PORT:
+        # Port is open - try to confirm it's actually a CDP endpoint.
+        if is_cdp:
             try:
                 with urllib.request.urlopen(f"http://localhost:{port}/json/version", timeout=2) as resp:
                     data = json.loads(resp.read().decode())
@@ -189,9 +195,43 @@ def check_port(port: int, label: str) -> bool:
     _print_result(
         INFO,
         label,
-        "not open (expected until you launch the debug browser - see references/browser-setup.md)",
+        "not open (expected unless a managed/manual debug browser is currently active - "
+        "see references/browser-setup.md)",
     )
     return False
+
+
+def check_config_file() -> bool:
+    if CONFIG_PATH.exists():
+        _print_result(CHECK, "config.toml", f"found at {CONFIG_PATH}")
+        return True
+    _print_result(
+        INFO,
+        "config.toml",
+        f"not found at {CONFIG_PATH} - expected before first run of `eahelper server`; "
+        "it is created automatically the first time you answer the setup prompts "
+        "(workspace URL, database choice), or via `eahelper config set`.",
+    )
+    return False
+
+
+def check_server_health() -> bool:
+    url = f"http://localhost:{PROXY_PORT}/healthz"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            if resp.status == 200:
+                _print_result(CHECK, "eahelper server", f"healthy ({url})")
+                return True
+            _print_result(WARN, "eahelper server", f"{url} returned status {resp.status}")
+            return False
+    except (urllib.error.URLError, OSError):
+        _print_result(
+            INFO,
+            "eahelper server",
+            f"not reachable at {url} (expected if the server isn't running yet - "
+            "start it with `eahelper server` or `eahelper server start`)",
+        )
+        return False
 
 
 def main() -> int:
@@ -207,15 +247,20 @@ def main() -> int:
     }
 
     print("-" * 70)
-    check_port(DEBUG_PORT, f"Chrome/Edge debug port ({DEBUG_PORT})")
-    check_port(PROXY_PORT, f"eahelper proxy port ({PROXY_PORT})")
+    check_config_file()
+    check_server_health()
+
+    print("-" * 70)
+    check_port(CDP_PORT, f"Managed browser CDP port ({CDP_PORT})", is_cdp=True)
+    check_port(LEGACY_CDP_PORT, f"Legacy CDP port ({LEGACY_CDP_PORT}, pre-v0.2.0 convention)", is_cdp=True)
+    check_port(PROXY_PORT, f"eahelper server port ({PROXY_PORT})")
 
     print("-" * 70)
     required = ["python", "uv", "dvm_eahelper"]
     missing_required = [name for name in required if not results[name]]
 
     if not missing_required and results["playwright_chromium"]:
-        print("All prerequisites look good. Next: launch the debug browser (references/browser-setup.md)")
+        print("All prerequisites look good. Next: run `eahelper server` (references/browser-setup.md)")
         return 0
     if not missing_required:
         print("Core prerequisites OK. Playwright Chromium could not be confirmed - see warning above.")
