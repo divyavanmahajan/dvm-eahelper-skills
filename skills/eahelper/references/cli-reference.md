@@ -140,7 +140,9 @@ eahelper download --all-factsheets --output data/leanix/
 |---|---|---|
 | `--db {kuzu,neo4j}` | `graph.db` in `config.toml`, else prompted | Target graph database |
 | `--data-dir PATH` | `data/leanix` | Directory of previously downloaded JSON |
-| `--mapping PATH` | `metamodel-mapping.yaml` in CWD, else bundled default | Controls which types/relations are loaded and how they're named |
+| `--mapping PATH` | see "The mapping file" below | Controls which types/relations are loaded and how they're named |
+| `--generate-mapping` | off | Scan the live workspace and write `metamodel-mapping.yaml` to the CWD, then exit. Requires the proxy to be running |
+| `--all-factsheets` | off | Import every FactSheet type from the live workspace, ignoring the mapping's `factsheet_types` filter (relationship mappings still apply) |
 | `--limit N` | none | Cap rows loaded per type/relation — smoke test |
 | `--skip-download` | n/a | (If load also triggers a download step) load only from existing JSON |
 
@@ -155,6 +157,30 @@ If `--db` is omitted and not set in `~/.eahelper/config.toml`, you'll be prompte
 and the answer is saved back. Default to `kuzu` unless the user has an existing Neo4j server or
 explicitly wants Neo4j. `load` auto-starts `server` in the background if the proxy isn't already
 reachable.
+
+### The mapping file (`metamodel-mapping.yaml`)
+
+The mapping YAML controls **which FactSheet types are downloaded/loaded** (`factsheet_types`
+whitelist) and **how LeanIX relation fields become graph relationship types** (`relationships`
+map, e.g. `relApplicationToBusinessCapability → SUPPORTS`). Both `download` and `load` use it.
+
+Resolution order — the first match wins:
+
+1. `--mapping PATH` — hard error if the file doesn't exist.
+2. `./metamodel-mapping.yaml` in the current working directory.
+3. The default mapping bundled inside the installed `dvm-eahelper` package.
+4. Built-in hardcoded defaults.
+
+The bundled default (step 3) covers a generic LeanIX metamodel; workspaces with custom FactSheet
+types or relation fields will silently skip anything not listed. To make the mapping explicit and
+workspace-specific, generate one from the live workspace and keep it in your project directory:
+
+```bash
+eahelper load --generate-mapping     # writes ./metamodel-mapping.yaml (proxy must be running)
+```
+
+Subsequent `download`/`load` runs from that directory pick it up automatically (step 2). Edit it
+to rename relationship types or trim the `factsheet_types` list.
 
 ## `eahelper seed`
 

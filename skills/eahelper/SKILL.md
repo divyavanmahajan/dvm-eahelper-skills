@@ -119,6 +119,14 @@ and no default is set in `~/.eahelper/config.toml`, `eahelper` prompts interacti
 For Neo4j, the connection URI/username can live in `~/.eahelper/config.toml`, but the password is
 never stored there — set `NEO4J_PASSWORD` via environment variable or a `.env` file.
 
+**Mapping:** which types get loaded and how relations are named is controlled by
+`metamodel-mapping.yaml`, resolved as: `--mapping PATH` → `./metamodel-mapping.yaml` in the CWD →
+the default bundled in the package → built-in defaults. If nothing local exists, the **bundled
+default is used silently** — for workspaces with custom FactSheet types, generate an explicit
+workspace-specific mapping first with `eahelper load --generate-mapping` (writes
+`./metamodel-mapping.yaml`, picked up automatically afterwards). Full detail:
+[references/cli-reference.md](references/cli-reference.md).
+
 See [references/database-backends.md](references/database-backends.md) for the KuzuDB vs Neo4j
 tradeoffs, storage locations, and idempotency notes.
 
