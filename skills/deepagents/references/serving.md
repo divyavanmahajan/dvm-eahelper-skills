@@ -398,3 +398,97 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_EXPORTER_OTLP_PROTOCOL=ht
 # Windows (PowerShell)
 $env:OTEL_TRACES_EXPORTER = "console"; uvicorn myapp.server:app
 ```
+
+## Token usage reporting
+
+Verified pattern (from the working `usage.py` / `server.py` `/chat` handler / `cli.py` REPL in
+dvm-eaagent) for reporting per-turn token usage from any serving surface.
+
+### Where usage lives
+
+Every `AIMessage` carries `usage_metadata`, populated by the provider integration (e.g.
+`langchain-anthropic`): `input_tokens`, `output_tokens`, `total_tokens`, plus
+`input_token_details` (`cache_read`, `cache_creation`) and `output_token_details` (`reasoning` —
+Anthropic "thinking" tokens when extended thinking is enabled).
+
+### A turn is several model calls — aggregate over the turn's new AIMessages
+
+A single agent turn usually contains multiple model calls (tool-use loops), each producing its own
+`AIMessage` with its own `usage_metadata`. Per-turn usage is therefore the **sum over the
+AIMessages produced in that turn**:
+
+```python
+from typing import Any
+from langchain_core.messages import AIMessage
+
+
+def aggregate_usage(messages: list[Any], since_ids: set[str] | None = None) -> dict[str, int]:
+    """Sum usage_metadata over the AIMessages in `messages`.
+
+    Pass `since_ids` = the message ids present BEFORE the turn to get per-turn
+    usage from a thread that carries history.
+    """
+    totals = {
+        "input_tokens": 0, "cached_input_tokens": 0, "thinking_tokens": 0,
+        "output_tokens": 0, "total_tokens": 0, "model_calls": 0,
+    }
+    for msg in messages:
+        if not isinstance(msg, AIMessage):
+            continue
+        if since_ids is not None and msg.id in since_ids:
+            continue
+        usage = getattr(msg, "usage_metadata", None)
+        if not usage:
+            continue
+        in_details = usage.get("input_token_details") or {}
+        out_details = usage.get("output_token_details") or {}
+        totals["input_tokens"] += usage.get("input_tokens", 0) or 0
+        totals["cached_input_tokens"] += in_details.get("cache_read", 0) or 0
+        totals["thinking_tokens"] += out_details.get("reasoning", 0) or 0
+        totals["output_tokens"] += usage.get("output_tokens", 0) or 0
+        totals["total_tokens"] += usage.get("total_tokens", 0) or 0
+        totals["model_calls"] += 1
+    return totals
+```
+
+### The prior-message-ids snapshot (threads with history)
+
+`agent.invoke(...)` returns the **full thread state**, not just the new turn, when the graph has a
+checkpointer and the thread has history. To isolate the turn, snapshot the message ids from
+`agent.get_state(config)` **before** invoking, then skip those ids when aggregating — the verified
+`/chat` handler pattern:
+
+```python
+config = {"configurable": {"thread_id": thread_id}}
+
+# Snapshot message ids before the turn so usage is per-turn, not per-thread.
+prior_ids: set[str] = set()
+state = agent.get_state(config)
+if state and state.values:
+    prior_ids = {m.id for m in state.values.get("messages", []) if getattr(m, "id", None)}
+
+result = agent.invoke({"messages": [{"role": "user", "content": text}]}, config=config)
+usage = aggregate_usage(result.get("messages", []), prior_ids)
+# e.g. include it in the HTTP response: {"reply": ..., "thread_id": ..., "usage": usage}
+```
+
+The same pattern works in a streaming CLI REPL: snapshot `prior_ids`, stream with
+`stream_mode="values"` keeping the last chunk's `messages`, then print
+`aggregate_usage(final_messages, prior_ids)` as a one-liner after each turn (e.g.
+`tokens: in=... (cached=...) thinking=... out=... calls=...`).
+
+### Prompt caching is already on for Anthropic — cache_read just works
+
+`create_deep_agent` auto-appends `AnthropicPromptCachingMiddleware` (ephemeral cache, 5-minute
+TTL; a no-op for non-Anthropic models) to the middleware stack, so `cache_read` is populated for
+Anthropic models with **no setup at all**. Real measured example from the working implementation:
+turn 2 of a thread reported `input=11705` with `cached=11689` — nearly the whole repeated prefix
+(system prompt, skills, memory, tool schemas) served from cache.
+
+### Caveat: usage over AG-UI
+
+Whether these usage numbers reach an AG-UI frontend depends on what the `ag-ui-langgraph` adapter
+forwards in its state/messages events — **unverified**; the verified implementations report usage
+via their own `/chat` JSON response and the CLI REPL instead. Inspect the adapter's emitted
+`STATE_SNAPSHOT`/message events (or add usage to your own endpoint's response) before relying on
+AG-UI delivery.

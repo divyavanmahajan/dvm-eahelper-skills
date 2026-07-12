@@ -388,6 +388,10 @@ To expose the agent beyond `langgraph dev`, see
 - **OpenTelemetry**: env-var-driven, no-op-by-default tracing (`OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_TRACES_EXPORTER`, `OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`), FastAPI instrumentation, and
   `opentelemetry-instrumentation-langchain` for LLM/chain spans.
+- **Token usage reporting**: every `AIMessage` carries `usage_metadata`; a turn = multiple model
+  calls, so aggregate over the turn's new AIMessages via a prior-message-ids snapshot from
+  `agent.get_state()`. Anthropic cache-read tokens are populated with no setup (deepagents
+  auto-adds `AnthropicPromptCachingMiddleware`).
 
 ## Reference index
 
@@ -398,4 +402,5 @@ To expose the agent beyond `langgraph dev`, see
   read-only vs. read-write tool restriction, sandbox provider selection, FastAPI wrapper, CLI REPL
   loop, `langgraph.json` layout for multi-graph projects.
 - [references/serving.md](references/serving.md) — AG-UI endpoint, Azure AI Foundry hosted agent,
-  OpenAI-Responses-shape local testing endpoint, OpenTelemetry wiring.
+  OpenAI-Responses-shape local testing endpoint, OpenTelemetry wiring, per-turn token usage
+  reporting.
