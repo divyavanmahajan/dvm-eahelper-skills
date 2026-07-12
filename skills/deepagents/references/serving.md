@@ -485,10 +485,15 @@ Anthropic models with **no setup at all**. Real measured example from the workin
 turn 2 of a thread reported `input=11705` with `cached=11689` — nearly the whole repeated prefix
 (system prompt, skills, memory, tool schemas) served from cache.
 
-### Caveat: usage over AG-UI
+### Usage over AG-UI (verified)
 
-Whether these usage numbers reach an AG-UI frontend depends on what the `ag-ui-langgraph` adapter
-forwards in its state/messages events — **unverified**; the verified implementations report usage
-via their own `/chat` JSON response and the CLI REPL instead. Inspect the adapter's emitted
-`STATE_SNAPSHOT`/message events (or add usage to your own endpoint's response) before relying on
-AG-UI delivery.
+The `ag-ui-langgraph` adapter DOES deliver usage to AG-UI frontends: streaming text chunks carry
+`usage_metadata: null`, but the **final `STATE_SNAPSHOT` event contains the full LangGraph
+messages, and each `ai` message in it has real `usage_metadata`** (verified by capturing the SSE
+stream: `{input_tokens: 11596, output_tokens: 69, input_token_details: {cache_read: 11266,
+cache_creation: 327}}`). The snapshot message ids (`lc_run--...`) match the chat message ids, so a
+frontend can attach per-turn usage to the rendered messages. With CopilotKit, read the agent state
+via `useCoAgent({ name: "<agent>" })` and join `state.messages[].usage_metadata` to the visible
+messages by id — verified working in a CopilotKit 1.62 frontend (per-message token footer +
+running total). Tool calls render via the catch-all frontend action
+(`useCopilotAction({ name: "*", render: ... })`, present in 1.62's type definitions).
