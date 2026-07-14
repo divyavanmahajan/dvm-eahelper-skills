@@ -1,15 +1,17 @@
 # Serving a DeepAgents Agent
 
 How to expose a `create_deep_agent` graph over HTTP beyond `langgraph dev`: the AG-UI protocol,
-Azure AI Foundry hosted agents, and OpenTelemetry wiring. Everything in this file is verified
-against a working, tested implementation (the `dvm-eaagent` project: `endpoints.py`,
-`azure_foundry.py`, `telemetry.py`, `server.py`, `docs/foundry.md`) — deviations or untested
-claims are flagged inline.
+Azure AI Foundry hosted agents, OpenTelemetry wiring, per-turn token usage, the A2A protocol, and
+publishing the agent as an MCP server. Everything in this file is verified against a working,
+tested implementation (the `dvm-eaagent` project: `endpoints.py`, `azure_foundry.py`,
+`telemetry.py`, `server.py`, `a2a_server.py`, `mcp_server.py`, `cli.py`, `docs/foundry.md`) —
+deviations or untested claims are flagged inline.
 
-## Checkpointer prerequisite (applies to AG-UI and Foundry)
+## Checkpointer prerequisite (applies to AG-UI, Foundry, A2A, and the MCP-server tool)
 
-Both serving adapters below call LangGraph state APIs on the graph. Build the agent **with a
-checkpointer** when self-hosting:
+The AG-UI and Foundry adapters call LangGraph state APIs on the graph, and the A2A executor and
+MCP `ask_<agent>` tool below rely on `thread_id`-keyed conversation resumption. Build the agent
+**with a checkpointer** when self-hosting:
 
 ```python
 from deepagents import create_deep_agent
@@ -497,3 +499,293 @@ via `useCoAgent({ name: "<agent>" })` and join `state.messages[].usage_metadata`
 messages by id — verified working in a CopilotKit 1.62 frontend (per-message token footer +
 running total). Tool calls render via the catch-all frontend action
 (`useCopilotAction({ name: "*", render: ... })`, present in 1.62's type definitions).
+
+## A2A protocol (serve the agent as an A2A remote agent)
+
+[A2A (Agent-to-Agent)](https://a2a-protocol.org/) is the Linux Foundation protocol (originally
+Google's) for one agent to call another as a *peer* — distinct from MCP, which exposes callable
+*tools*. Verified end-to-end (live server answered a real query over `message/send`).
+
+### CRITICAL: pin `a2a-sdk` 0.3.x — the 1.x line broke the documented server API
+
+The current `a2a-sdk` major line on PyPI (1.x, e.g. 1.0.3) is a **protobuf-native rewrite** that
+removed the pydantic `AgentCard`/`AgentSkill`/`A2AStarletteApplication` API that almost every A2A
+tutorial and doc still shows — those pydantic types now survive only in `a2a.compat.v0_3`, a
+wire-format compatibility shim, **not** a supported way to build a server (confirmed by inspecting
+the installed 1.0.3 package source, not just docs). The working pin is the last 0.x release line:
+
+```toml
+[project.optional-dependencies]
+a2a = ["a2a-sdk[http-server]>=0.3.26,<0.4"]
+```
+
+This gives the stable, widely-documented pydantic server API: `AgentExecutor`, `RequestContext`,
+`DefaultRequestHandler`, `A2AStarletteApplication` (with `.add_routes_to_app`). Do not follow
+tutorials into 1.x expecting these to exist.
+
+### AgentExecutor bridging A2A → the DeepAgents graph
+
+Map each A2A `context_id` 1:1 to a LangGraph checkpointer `thread_id`, so a caller reusing the
+same `context_id` continues the same conversation (same semantics as a `/chat` `thread_id`):
+
+```python
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.utils import new_agent_text_message
+from langchain_core.messages import AIMessage
+
+
+class MyAgentExecutor(AgentExecutor):
+    def __init__(self, get_agent):
+        self._get_agent = get_agent   # injectable factory: build_agent (with checkpointer!) or a test stub
+        self._agent = None
+
+    def _agent_instance(self):
+        if self._agent is None:
+            self._agent = self._get_agent()
+        return self._agent
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        agent = self._agent_instance()
+        user_text = context.get_user_input()
+        thread_id = context.context_id or context.task_id or "a2a-default"
+
+        result = await agent.ainvoke(
+            {"messages": [{"role": "user", "content": user_text}]},
+            config={"configurable": {"thread_id": thread_id}},
+        )
+        reply = next(
+            (m.content if isinstance(m.content, str) else str(m.content)
+             for m in reversed(result.get("messages", []))
+             if isinstance(m, AIMessage) and m.content),
+            "",
+        )
+        await event_queue.enqueue_event(
+            new_agent_text_message(reply, context_id=context.context_id, task_id=context.task_id)
+        )
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        # Single-shot synchronous turns — nothing in-flight to cancel.
+        raise NotImplementedError("single-shot turns; no in-flight task to cancel")
+```
+
+### Agent card — advertise `streaming=False` honestly
+
+The executor above runs one invoke per task and enqueues a single final message; it does not
+stream tokens over `message/stream` (a `message/stream` call yields the same single message as one
+SSE chunk). The card must say so, rather than advertising a capability that silently degrades:
+
+```python
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+
+
+def build_agent_card(base_url: str = "http://localhost:8000") -> AgentCard:
+    skill = AgentSkill(
+        id="my_skill",
+        name="My skill",
+        description="What this agent can do, specifically.",
+        tags=["domain", "keywords"],
+        examples=["An example question this agent answers well."],
+    )
+    return AgentCard(
+        name="my-agent",
+        description="What this agent is.",
+        url=f"{base_url.rstrip('/')}/a2a",
+        version="0.1.0",
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        capabilities=AgentCapabilities(streaming=False, push_notifications=False),
+        skills=[skill],
+    )
+```
+
+Build `base_url` from an env var the serve command sets, so the card's `url` reflects the port the
+server actually listens on.
+
+### Mounting onto an existing FastAPI app (no second port)
+
+`A2AStarletteApplication.add_routes_to_app(app, ...)` extends the *passed-in* app's own `.routes`
+list in place (verified via `inspect.signature`/source against the installed 0.3.26 package).
+FastAPI is a Starlette subclass, so A2A mounts directly onto the same FastAPI app as your other
+endpoints:
+
+```python
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH   # == "/.well-known/agent-card.json"
+
+
+def mount_a2a(app, base_url="http://localhost:8000", path="/a2a", get_agent=None) -> None:
+    handler = DefaultRequestHandler(
+        agent_executor=MyAgentExecutor(get_agent=get_agent),
+        task_store=InMemoryTaskStore(),
+    )
+    a2a_app = A2AStarletteApplication(agent_card=build_agent_card(base_url), http_handler=handler)
+    a2a_app.add_routes_to_app(app, agent_card_url=AGENT_CARD_WELL_KNOWN_PATH, rpc_url=path)
+```
+
+This yields JSON-RPC at `POST /a2a` and the agent card at `GET /.well-known/agent-card.json` —
+the current spec path, exported as `a2a.utils.constants.AGENT_CARD_WELL_KNOWN_PATH` (the *old*
+`/.well-known/agent.json` survives as `PREV_AGENT_CARD_WELL_KNOWN_PATH` for backward compat).
+The well-known path is spec-mandated to live at the domain root, not under `path`. Mount from a
+lifespan hook if you want imports of the server module to stay side-effect free.
+
+### Calling it
+
+```bash
+curl -s http://localhost:8000/a2a -H 'content-type: application/json' -d '{
+  "jsonrpc": "2.0", "id": 1, "method": "message/send",
+  "params": {"message": {"role": "user", "parts": [{"kind": "text", "text": "How many Interface nodes?"}], "messageId": "m1"}}
+}' | jq
+```
+
+Or with the official Python client from the same 0.3.x SDK:
+
+```python
+import asyncio
+import httpx
+from a2a.client import A2ACardResolver, A2AClient
+from a2a.types import MessageSendParams, SendMessageRequest
+
+async def main():
+    async with httpx.AsyncClient() as http_client:
+        card = await A2ACardResolver(http_client, base_url="http://localhost:8000").get_agent_card()
+        client = A2AClient(http_client, agent_card=card)
+        req = SendMessageRequest(
+            id="1",
+            params=MessageSendParams(message={"role": "user", "parts": [{"kind": "text", "text": "hello"}], "messageId": "m1"}),
+        )
+        resp = await client.send_message(req)
+        print(resp)
+
+asyncio.run(main())
+```
+
+## Exposing the agent AS an MCP server
+
+The inverse of §4-in-SKILL.md's MCP *client* story: publish the whole DeepAgents agent as a single
+MCP **tool**, so other MCP-aware harnesses (Claude Code, VS Code Copilot, other coding agents) can
+delegate questions to it. Verified end-to-end with `mcp>=1.9` (`FastMCP` from the official `mcp`
+Python SDK; exact version exercised: 1.26.0).
+
+### FastMCP server with an `ask_<agent>` tool
+
+Register one tool that runs a **full agent turn** (the inner agent may loop over its own tools any
+number of times before replying), plus an optional cheap `list_capabilities` tool so callers can
+decide whether delegation is worth a turn. **Tool docstrings become the MCP tool descriptions** —
+write them for the *calling* agent's benefit:
+
+```python
+import uuid
+from mcp.server.fastmcp import FastMCP
+
+_agent = None
+
+def _get_agent():
+    global _agent
+    if _agent is None:
+        _agent = build_agent()   # create_deep_agent(..., checkpointer=InMemorySaver())
+    return _agent
+
+
+def create_mcp_server() -> FastMCP:
+    mcp = FastMCP(
+        name="my-agent",
+        instructions="When to delegate to this agent — the harness-facing usage hint.",
+        json_response=True,
+        stateless_http=True,
+        streamable_http_path="/",   # so app.mount('/mcp', ...) puts the endpoint exactly at /mcp
+    )
+
+    @mcp.tool()
+    def ask_my_agent(question: str, thread_id: str | None = None) -> str:
+        """Ask my-agent a question about <domain>.
+
+        Runs a full agent turn (it may call its own tools any number of times).
+        thread_id continues a previous conversation; omit to start a new one.
+        """
+        agent = _get_agent()
+        resolved = thread_id or str(uuid.uuid4())
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config={"configurable": {"thread_id": resolved}},
+        )
+        reply = result["messages"][-1].content
+        return f"{reply}\n\n[thread_id={resolved}]"
+
+    return mcp
+```
+
+(The verified implementation also appends the per-turn token-usage one-liner — see
+"Token usage reporting" above — and returns `list_capabilities()` as JSON of the inner agent's
+tools/skills.)
+
+### Streamable-HTTP transport, mounted inside the same FastAPI app
+
+`FastMCP(..., streamable_http_path="/")` + `.streamable_http_app()` mounts as a sub-app, and the
+FastMCP **session manager must be running before the first request** — enter
+`mcp.session_manager.run()` in the parent app's lifespan (it owns the transport's background task
+group):
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+mcp = create_mcp_server()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with mcp.session_manager.run():
+        yield
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/mcp", mcp.streamable_http_app())
+```
+
+### stdio transport via a CLI subcommand
+
+For harnesses that spawn a subprocess instead of connecting to a running server:
+
+```python
+def run_stdio() -> None:
+    mcp = create_mcp_server()
+    mcp.run(transport="stdio")
+```
+
+Wire it to a CLI subcommand (e.g. `my-agent mcp`).
+
+### Client configuration (both transports)
+
+HTTP (`.mcp.json`, needs the server running):
+
+```json
+{
+  "mcpServers": {
+    "my-agent": { "type": "http", "url": "http://localhost:8000/mcp" }
+  }
+}
+```
+
+```bash
+claude mcp add --transport http my-agent http://localhost:8000/mcp
+```
+
+stdio (harness spawns the process; no server needed):
+
+```json
+{
+  "mcpServers": {
+    "my-agent": { "command": "my-agent", "args": ["mcp"] }
+  }
+}
+```
+
+```bash
+claude mcp add my-agent -- my-agent mcp
+```
+
+**MCP vs. A2A:** expose the agent over MCP when callers want a *tool* inside their own loop
+(one question in, one answer out); expose it over A2A when callers want a *peer agent* with an
+agent card, skills metadata, and protocol-level conversation semantics. The verified
+implementation serves both from the same FastAPI app and port.

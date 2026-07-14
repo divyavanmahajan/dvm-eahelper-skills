@@ -370,7 +370,7 @@ LangGraph platform (they inject their own persistence), but with an explicit che
 `InMemorySaver()`) when self-hosting — the AG-UI and Azure Foundry adapters in
 [references/serving.md](references/serving.md) require one.
 
-## 10. Serving over HTTP (AG-UI, Azure AI Foundry, OpenTelemetry)
+## 10. Serving over HTTP (AG-UI, Azure AI Foundry, A2A, MCP server, OpenTelemetry)
 
 To expose the agent beyond `langgraph dev`, see
 [references/serving.md](references/serving.md) — all verified against a working implementation:
@@ -392,6 +392,16 @@ To expose the agent beyond `langgraph dev`, see
   calls, so aggregate over the turn's new AIMessages via a prior-message-ids snapshot from
   `agent.get_state()`. Anthropic cache-read tokens are populated with no setup (deepagents
   auto-adds `AnthropicPromptCachingMiddleware`).
+- **A2A protocol** (serve the agent as a *peer agent* for other A2A-aware agents): **pin
+  `a2a-sdk[http-server]>=0.3.26,<0.4`** — the 1.x line is a protobuf-native rewrite that removed
+  the pydantic server API (`A2AStarletteApplication` etc.) nearly all tutorials still show.
+  `AgentExecutor` wrapping `agent.ainvoke` with A2A `context_id` → LangGraph `thread_id`, mounting
+  onto the existing FastAPI app via `add_routes_to_app` (no second port), agent card at
+  `/.well-known/agent-card.json`, and honest `streaming=False`.
+- **Exposing the agent AS an MCP server** (other coding agents call it as a *tool*): `FastMCP`
+  (`mcp>=1.9`) with an `ask_<agent>(question, thread_id)` tool running a full agent turn,
+  streamable HTTP mounted at `/mcp` in the same FastAPI app (`mcp.session_manager.run()` in the
+  lifespan) plus stdio via a CLI subcommand, and `.mcp.json` / `claude mcp add` client snippets.
 
 ## Reference index
 
@@ -403,4 +413,5 @@ To expose the agent beyond `langgraph dev`, see
   loop, `langgraph.json` layout for multi-graph projects.
 - [references/serving.md](references/serving.md) — AG-UI endpoint, Azure AI Foundry hosted agent,
   OpenAI-Responses-shape local testing endpoint, OpenTelemetry wiring, per-turn token usage
-  reporting.
+  reporting, A2A remote-agent serving (with the a2a-sdk 0.3.x-vs-1.x pin warning), and exposing
+  the agent as an MCP server (FastMCP, streamable HTTP + stdio).
